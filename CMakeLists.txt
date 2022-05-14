@@ -8,10 +8,12 @@ find_package(MPI REQUIRED)
 find_package(Eigen3 REQUIRED)
 
 add_library(myutils STATIC myutils.hpp myutils.cpp)
-target_precompile_headers(myutils PUBLIC <vector> <algorithm> <numeric>)
+target_precompile_headers(myutils PUBLIC <vector> <algorithm> <numeric> <Eigen/Dense>)
+target_link_libraries (myutils PUBLIC Eigen3::Eigen)
 
 add_executable(paralg_cpp main.cpp)
-target_precompile_headers(paralg_cpp PUBLIC [["mpi.h"]] <cstdio> <Eigen/Dense> <numeric> <string> <vector>)
+target_precompile_headers(paralg_cpp PUBLIC [["mpi.h"]] <cstdio> <Eigen/Dense> <numeric> <string> <vector> <random>
+        <iostream> <chrono>)
 target_link_libraries (paralg_cpp PUBLIC Eigen3::Eigen)
 target_link_libraries(paralg_cpp PUBLIC MPI::MPI_CXX)
 target_link_libraries(paralg_cpp PRIVATE myutils)

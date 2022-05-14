@@ -1,3 +1,9 @@
 # Project exclude paths
 /cmake-build-debug/
 /cmake-build-release/
+/.idea/.gitignore
+/.idea/.name
+/.idea/misc.xml
+/.idea/modules.xml
+/.idea/paralg-cpp.iml
+/.idea/vcs.xml

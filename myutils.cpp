@@ -23,3 +23,4 @@ vector<int> count_displ(int len, int task_cnt) {
     displ[0] = 0;
     return displ;
 }
+
