@@ -22,10 +22,10 @@ bool check_result(const vector<T> &vec, T x0, T result) {
 }
 
 template<typename T>
-vector<Matrix<T>> generate_matrices(int n, int matrix_dim, vector<T>&& coefficients) {
-    vector<Matrix<T>> result(n);
+vector<Matrix<T>> generate_matrices(int n, int matrix_dim, const vector<T>& coefficients) {
+    vector<Matrix<T>> result(n, Matrix<T>(matrix_dim, matrix_dim));
     for(int i = 0; i < n; ++i) {
-        auto matrix = Matrix<T>(matrix_dim, matrix_dim);
+        auto &matrix = result[i];
         auto first_row = matrix.row(0);
         std::copy(coefficients.begin() + (matrix_dim*i), coefficients.begin() + (matrix_dim*(i+1)), first_row.begin());
         auto zeros = matrix.block(1, 0, matrix_dim - 1, matrix_dim).reshaped();
@@ -35,7 +35,6 @@ vector<Matrix<T>> generate_matrices(int n, int matrix_dim, vector<T>&& coefficie
             auto diag = matrix.block(1, 0, matrix_dim - 2, matrix_dim - 2).diagonal();
             std::fill(diag.begin(), diag.end(), 1);
         }
-        result[i] = std::forward<Matrix<T>>(matrix);
     }
     return result;
 }
