@@ -11,23 +11,24 @@
 using std::vector;
 
 template<typename T>
+using Matrix3Trm = Eigen::Matrix<T, 3, 3, Eigen::RowMajor>;
+template<typename T>
 using Matrix = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 
 using mnum_t = int;
 using hr_clock = std::chrono::high_resolution_clock;
 
-//#define DEBUG
+//#define DEBUG_PRINT
+//#define NON_PARALLEL
+#define PARALLEL_MPI
 
 mnum_t sequential_3coef(int n, int coeff_num, const vector<mnum_t> &coefficients, mnum_t x0, mnum_t x_min1) {
     mnum_t x = 0;
     auto x_prev2 = x_min1;
     auto x_prev1 = x0;
-    for (int i = 0; i < n*coeff_num; i += coeff_num) {
-#ifdef DEBUG
-        std::cout << "Coeffs:" << coefficients[i] << ", " << coefficients[i+1] << ", " << coefficients[i+2] << std::endl;
-#endif
-        x = x_prev2*coefficients[i+1] + coefficients[i+2];
-        x = x_prev1*coefficients[i] + x;
+    for (int i = 0; i < n * coeff_num; i += coeff_num) {
+        x = x_prev2 * coefficients[i + 1] + coefficients[i + 2];
+        x = x_prev1 * coefficients[i] + x;
         x_prev2 = x_prev1;
         x_prev1 = x;
     }
@@ -35,111 +36,139 @@ mnum_t sequential_3coef(int n, int coeff_num, const vector<mnum_t> &coefficients
 }
 
 int main() {
-    int size = 2;
-    int matrix_size = 3;
+    const int matrix_dim = 3;
+    const int matrix_size = matrix_dim * matrix_dim;
+#ifdef NON_PARALLEL
+    const int size = 2;
     std::random_device device;
     std::mt19937 gen;
     gen.seed(device());
     std::normal_distribution<> dist{10.0, 2.0};
 
-    int n = 0, x0, x1;
-    printf("Enter n:\n");
-    scanf_s("%d", &n);
-    auto sendbuf = generate_coefficients<mnum_t>(
-            n, matrix_size, [&gen, &dist](){ return static_cast<mnum_t>(dist(gen)); }
-            );
+    double seq_time_avg = 0.0;
+    double mmul_time_avg = 0.0;
 
-    printf("Enter x0:\n");
+    int n = 0, x0 = 0, x1 = 0;
+    printf_s("Enter n:\n");
+    scanf_s("%d", &n);
+    printf_s("Enter x0:\n");
     scanf_s("%d", &x0);
-    printf("Enter x1:\n");
+    printf_s("Enter x1:\n");
     scanf_s("%d", &x1);
 
-    /*Matrix<mnum_t> x0_vec = Matrix<mnum_t>({
-            {x0},
-            {x1},
-            {1}
-    });
-#ifdef DEBUG
-    std::cout << x0_vec << std::endl << std::endl;
-#endif*/
+    auto x0_vec = new mnum_t[matrix_size]();
+    x0_vec[0] = x0;
+    x0_vec[3] = x1;
+    x0_vec[6] = 1;
+
+    auto sendbuf = generate_coefficients<mnum_t>(
+            n, matrix_dim, [&gen, &dist]() { return static_cast<mnum_t>(dist(gen)); }
+    );
+
     auto count = count_indices(n, size);
     auto displ = count_displ(n, size);
 
     auto t1 = hr_clock::now();
-    auto seq_result = sequential_3coef(n, matrix_size, sendbuf, x0, x1);
+    auto seq_result = sequential_3coef(n, matrix_dim, sendbuf, x0, x1);
     auto t2 = hr_clock::now();
+    std::cout << "Result:" << std::endl << seq_result << std::endl;
     std::chrono::duration<double, std::milli> ms_double = t2 - t1;
-    std::cout << "Seq duration: " << ms_double.count() << "ms\n" << std::endl;
-    std::cout << "Result sequential:" << std::endl << seq_result << std::endl;
+    seq_time_avg += ms_double.count();
 
-    auto task_results = vector<mnum_t>(matrix_size*matrix_size*n, 0); // n matrices of size x size
-    for (int rank = 0; rank < size; ++rank) {
-        auto recvbuf = vector<mnum_t>(matrix_size*matrix_size*count[rank], 0);
-        std::copy(
-                sendbuf.begin() + displ[rank]*matrix_size,
-                sendbuf.begin() + (displ[rank] + count[rank]) * matrix_size,
-                recvbuf.begin()
-        );
-        const size_t row_size = count[rank]*matrix_size;
-        for (size_t i = row_size; i < row_size*(matrix_size-1); i += matrix_size) {
-            recvbuf[i + (i / row_size) - 1] = 1;
-        }
-        for (size_t i = row_size*(matrix_size-1); i < row_size*matrix_size; i += matrix_size) {
-            recvbuf[i + matrix_size - 1] = 1;
-        }
+    auto sendbuf_matrices = generate_matrices(n, matrix_dim, sendbuf.data());
 
-        auto result = vector<mnum_t>(matrix_size*matrix_size);
-        for (size_t i = 0; i < matrix_size*matrix_size; ++i) {
-            result[i] = recvbuf[row_size - matrix_size + i % matrix_size + row_size*(i / matrix_size)];
-        }
-        std::cout << "Starting multiplication" << std::endl;
-    }
-    /*vector<Matrix<mnum_t>> task_results(size);
+    auto task_results = new mnum_t[matrix_size * size];// n matrices of size x size
     t1 = hr_clock::now();
-    for (int i = 0; i < size; ++i) {
-        auto t_start_op = hr_clock::now();
-        auto recvbuf = vector<mnum_t>(
-                sendbuf.begin()+displ[i]*matrix_size,  sendbuf.begin()+(displ[i]+count[i])*matrix_size
+    for (int rank = 0; rank < size; ++rank) {
+        const int recvbuf_size = matrix_size * count[rank];
+        auto recvbuf = new mnum_t[recvbuf_size];
+        std::copy(
+                sendbuf_matrices + displ[rank] * matrix_size,
+                sendbuf_matrices + (displ[rank] + count[rank]) * matrix_size,
+                recvbuf
         );
-        auto t_end_op = hr_clock::now();
-        std::chrono::duration<double, std::milli> ms_op = t_end_op - t_start_op;
-        std::cout << "Recvbuf duration: " << ms_op.count() << "ms\n" << std::endl;
-        t_start_op = hr_clock::now();
-        auto matrices = generate_matrices(count[i], matrix_size, recvbuf);
-        t_end_op = hr_clock::now();
-        ms_op = t_end_op - t_start_op;
-        std::cout << "Matrix generation duration: " << ms_op.count() << "ms\n" << std::endl;
-#ifdef DEBUG
-        for(auto &m: matrices) {
-            std::cout << "Coeffs:" << m.row(0) << std::endl << std::endl;
+        auto task_result = new mnum_t[matrix_size];
+        std::copy(recvbuf + recvbuf_size - matrix_size, recvbuf + recvbuf_size, task_result);
+        if (count[rank] > 1) {
+            for (int i = recvbuf_size - 2 * matrix_size; i > -1; i -= matrix_size) {
+                task_result = gemm_v1(matrix_dim, matrix_dim, matrix_dim, task_result, recvbuf + i);
+            }
         }
-#endif
-        Matrix<mnum_t> task_result;
-        t_start_op = hr_clock::now();
-        if (matrices.size() > 1) {
-            task_result = std::accumulate(matrices.rbegin()+1,  matrices.rend(), matrices[count[i]-1], std::multiplies());
-        } else {
-            task_result = matrices[0];
+        std::copy(task_result, task_result + matrix_size, task_results + rank * matrix_size);
+        delete[] recvbuf;
+        delete[] task_result;
+    }
+    auto result = new mnum_t[matrix_size];
+    std::copy(task_results + matrix_size * (size - 1), task_results + matrix_size * size, result);
+    if (size > 1) {
+        for (int i = matrix_size * (size - 2); i > -1; i -= matrix_size) {
+            result = gemm_v1(matrix_dim, matrix_dim, matrix_dim, result, task_results + i);
         }
-        t_end_op = hr_clock::now();
-        ms_op = t_end_op - t_start_op;
-        std::cout << "Matrix multiplication duration: " << ms_op.count() << "ms\n" << std::endl;
-        task_results[i] = task_result;
     }
-
-#ifdef DEBUG
-    for(auto &m: task_results) {
-        std::cout << m << std::endl << std::endl;
-    }
-#endif
-    auto result = (std::accumulate(
-            task_results.rbegin()+1,  task_results.rend(), task_results[size-1], std::multiplies()
-    ) * x0_vec)(0, 0);
+    result = gemm_v1(matrix_dim, matrix_dim, matrix_dim, result, x0_vec);
     t2 = hr_clock::now();
     ms_double = t2 - t1;
+    mmul_time_avg += ms_double.count();
+    delete[] task_results;
+    delete[] result;
+    delete[] x0_vec;
 
-    std::cout << "Matrix duration: " << ms_double.count() << "ms\n" << std::endl;
-    std::cout << "Result:" << std::endl << result << std::endl;
+    std::cout << "Sequential duration: " << seq_time_avg << "ms" << std::endl;
+    std::cout << "Matrix duration: " << mmul_time_avg << "ms\n" << std::endl;
+#endif
+#ifdef PARALLEL_MPI
+    int rank, size;
+    MPI_Init(nullptr, nullptr);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-    return 0;*/
+    int n = 0, x0 = 0, x1 = 0;
+    mnum_t *sendbuf;
+    vector<int> count(size);
+    vector<int> displ(size);
+    if (rank == 0) {
+        printf_s("Enter n:\n");
+        scanf_s("%d", &n);
+        printf_s("Enter x0:\n");
+        scanf_s("%d", &x0);
+        printf_s("Enter x1:\n");
+        scanf_s("%d", &x1);
+
+        auto x0_vec = new mnum_t[matrix_size]();
+        x0_vec[0] = x0;
+        x0_vec[3] = x1;
+        x0_vec[6] = 1;
+
+        std::random_device device;
+        std::mt19937 gen;
+        gen.seed(device());
+        std::normal_distribution<> dist{10.0, 2.0};
+
+        count = count_indices(n, size);
+        displ = count_displ(n, size);
+
+        auto coefficients = generate_coefficients<mnum_t>(
+                n, matrix_dim, [&gen, &dist]() { return static_cast<mnum_t>(dist(gen)); }
+        );
+
+        auto t1 = hr_clock::now();
+        auto seq_result = sequential_3coef(n, matrix_dim, coefficients, x0, x1);
+        auto t2 = hr_clock::now();
+        std::chrono::duration<double, std::milli> ms_double = t2 - t1;
+        printf("Result: %d", seq_result);
+        printf("Time: %.3f ms", ms_double.count());
+
+        sendbuf = generate_matrices(n, matrix_dim, coefficients.data());
+    }
+
+    MPI_Bcast(count.data(), size, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(displ.data(), size, MPI_INT, 0, MPI_COMM_WORLD);
+
+
+
+    if (rank == 0) {
+        delete[] sendbuf;
+    }
+#endif
+    return 0;
 }
