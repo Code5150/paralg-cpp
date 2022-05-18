@@ -61,7 +61,7 @@ int main() {
     auto displ = count_displ(n, size);
 
     auto t1 = hr_clock::now();
-    auto seq_result = sequential_3coef(n, matrix_dim, sendbuf, x0, x1);
+    auto seq_result = sequential_3coef(n, matrix_dim, sendbuf.data(), x0, x1);
     auto t2 = hr_clock::now();
     std::cout << "Result:" << std::endl << seq_result << std::endl;
     std::chrono::duration<double, std::milli> ms_double = t2 - t1;
