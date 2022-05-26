@@ -11,8 +11,20 @@
 
 using std::vector;
 
-vector<int> count_indices(int len, int task_cnt);
-vector<int> count_displ(int len, int task_cnt);
+vector<int> count_indices(int len, int task_cnt) {
+    vector<int> count(task_cnt, len / task_cnt);
+    std::transform(count.begin(), count.begin() + (len % task_cnt), count.begin(), [](int i){ return ++i; });
+    return count;
+}
+
+vector<int> count_displ(int len, int task_cnt) {
+    auto count = count_indices(len, task_cnt);
+    vector<int> displ(count.size());
+    std::partial_sum(count.begin(), count.end(), displ.begin());
+    std::rotate(displ.begin(), displ.end() - 1, displ.end());
+    displ[0] = 0;
+    return displ;
+}
 
 template<typename T>
 T* generate_matrices(int n, int matrix_dim, const T* coefficients) {
@@ -42,18 +54,50 @@ vector<T> generate_coefficients(int n, int coeff_num, std::function<T (void)>&& 
 template<typename T>
 T* gemm(int M, int N, int K, const T *A, const T *B)
 {
-    T* C = new T[M*K];
+    T* C = new T[M*K]();
     for (int i = 0; i < M; ++i)
     {
         T* c = C + i * N;
-        for (int j = 0; j < N; ++j)
-            c[j] = 0;
         for (int k = 0; k < K; ++k)
         {
             const T* b = B + k * N;
             T a = A[i*K + k];
             for (int j = 0; j < N; ++j)
                 c[j] += a * b[j];
+        }
+    }
+    return C;
+}
+
+template<typename T>
+T* gemm_opt(int M, int N, int K, const T *A, const T *B)
+{
+    T* C = new T[M*K]();
+    for (int j = 0; j < N; ++j)
+    {
+        T* c = C + j * M;
+        for (int k = 0; k < K; ++k)
+        {
+            const T* b = B + k * M;
+            T a = A[j*K + k];
+            for (int i = 0; i < M; ++i)
+                c[i] += a * b[i];
+        }
+    }
+    return C;
+}
+
+template<typename T>
+T* gemm_opt2(int M, int N, int K, const T *A, const T *B)
+{
+    T* C = new T[M*K]();
+    for (int j = 0; j < N; ++j)
+    {
+        for (int k = 0; k < K; ++k)
+        {
+            for (int i = 0; i < M; ++i) {
+                C[i * N + j] += A[i * K + k]*B[k*N + j];
+            }
         }
     }
     return C;

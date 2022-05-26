@@ -3,6 +3,7 @@
 #define PARALLEL_MPI
 
 #include <cstdio>
+#include <clocale>
 #include "mpi.h"
 #include <vector>
 #include "myutils.hpp"
@@ -28,6 +29,8 @@ mnum_t sequential_3coef(int n, int coeff_num, const mnum_t* coefficients, mnum_t
 }
 
 int main() {
+    setlocale(LC_ALL, "ru_RU.UTF-8");
+
     const int matrix_dim = 3;
     const int matrix_size = matrix_dim * matrix_dim;
 #ifdef NON_PARALLEL
@@ -63,7 +66,6 @@ int main() {
     auto t1 = hr_clock::now();
     auto seq_result = sequential_3coef(n, matrix_dim, sendbuf.data(), x0, x1);
     auto t2 = hr_clock::now();
-    std::cout << "Result:" << std::endl << seq_result << std::endl;
     std::chrono::duration<double, std::milli> ms_double = t2 - t1;
     seq_time_avg += ms_double.count();
 
@@ -83,7 +85,7 @@ int main() {
         std::copy(recvbuf + recvbuf_size - matrix_size, recvbuf + recvbuf_size, task_result);
         if (count[rank] > 1) {
             for (int i = recvbuf_size - 2 * matrix_size; i > -1; i -= matrix_size) {
-                task_result = gemm_v1(matrix_dim, matrix_dim, matrix_dim, task_result, recvbuf + i);
+                task_result = gemm_opt2(matrix_dim, matrix_dim, matrix_dim, task_result, recvbuf + i);
             }
         }
         std::copy(task_result, task_result + matrix_size, task_results + rank * matrix_size);
@@ -94,19 +96,27 @@ int main() {
     std::copy(task_results + matrix_size * (size - 1), task_results + matrix_size * size, result);
     if (size > 1) {
         for (int i = matrix_size * (size - 2); i > -1; i -= matrix_size) {
-            result = gemm_v1(matrix_dim, matrix_dim, matrix_dim, result, task_results + i);
+            result = gemm_opt2(matrix_dim, matrix_dim, matrix_dim, result, task_results + i);
         }
     }
-    result = gemm_v1(matrix_dim, matrix_dim, matrix_dim, result, x0_vec);
+    result = gemm_opt2(matrix_dim, matrix_dim, matrix_dim, result, x0_vec);
     t2 = hr_clock::now();
     ms_double = t2 - t1;
     mmul_time_avg += ms_double.count();
+
+    printf("Sequential duration: %.6f ms\n", seq_time_avg);
+    printf("Matrix duration: %.6f ms\n", mmul_time_avg);
+
+    if (result[0] == seq_result) {
+        printf("Results equal\n");
+    } else {
+        fprintf(stderr, "Results not equal");
+    }
+    fflush(stdout);
+
     delete[] task_results;
     delete[] result;
     delete[] x0_vec;
-
-    std::cout << "Sequential duration: " << seq_time_avg << "ms" << std::endl;
-    std::cout << "Matrix duration: " << mmul_time_avg << "ms\n" << std::endl;
 #endif
 #ifdef PARALLEL_MPI
 
@@ -123,10 +133,13 @@ int main() {
     vector<int> displ(size);
     if (rank == 0) {
         printf_s("Enter n:\n");
+        fflush(stdout);
         scanf_s("%d", &n);
         printf_s("Enter x0:\n");
+        fflush(stdout);
         scanf_s("%d", &x0);
         printf_s("Enter x1:\n");
+        fflush(stdout);
         scanf_s("%d", &x1);
 
         x0_vec = new mnum_t[matrix_size]();
@@ -155,6 +168,7 @@ int main() {
         printf("Result: %d\n", seq_result);
         printf("Time: %.6f ms\n", ms_double.count());
         printf("\n");
+        fflush(stdout);
 
         sendbuf = generate_matrices(n, matrix_dim, coefficients.data());
 #ifdef DEBUG_PRINT
@@ -194,7 +208,7 @@ int main() {
     std::copy(recvbuf + recvbuf_size - matrix_size, recvbuf + recvbuf_size, task_result);
     if (count[rank] > 1) {
         for (int i = recvbuf_size - 2 * matrix_size; i > -1; i -= matrix_size) {
-            auto tmp_result = gemm(matrix_dim, matrix_dim, matrix_dim, task_result, recvbuf + i);
+            auto tmp_result = gemm_opt2(matrix_dim, matrix_dim, matrix_dim, task_result, recvbuf + i);
             auto swap = task_result;
             task_result = tmp_result;
             delete[] swap;
@@ -208,7 +222,7 @@ int main() {
         std::copy(task_results + matrix_size * (size - 1), task_results + matrix_size * size, result);
         if (size > 1) {
             for (int i = matrix_size * (size - 2); i > -1; i -= matrix_size) {
-                auto tmp_result = gemm(matrix_dim, matrix_dim, matrix_dim, result, task_results + i);
+                auto tmp_result = gemm_opt2(matrix_dim, matrix_dim, matrix_dim, result, task_results + i);
                 auto swap = result;
                 result = tmp_result;
                 delete[] swap;
@@ -230,14 +244,15 @@ int main() {
     delete[] x0_vec;
 
     if (rank == 0) {
-        printf("Result: %d\n", result[0]);
-        printf("Time: %.6f ms\n", mmul_end - mmul_start);
+        printf("Parallel result: %d\n", result[0]);
+        printf("Parallel time: %.6f ms\n", mmul_end - mmul_start);
         printf("\n");
         if (result[0] == seq_result) {
             printf("Results equal\n");
         } else {
             fprintf(stderr, "Results not equal");
         }
+        fflush(stdout);
     }
     delete[] result;
 
